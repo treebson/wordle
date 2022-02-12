@@ -1,6 +1,6 @@
 import random
 
-print('\nWORDLE')
+print('\n---- WORDLE ----\n')
 
 def read_words(file_name):
     with open(file_name, 'r') as f:
@@ -9,45 +9,52 @@ def read_words(file_name):
     return words
 
 allowed_words = read_words('allowed_words.txt')
-possible_words = read_words('possible_words.txt')
 
-secret = random.choice(possible_words)
-print(secret)
+class Wordle:
+    def __init__(self, secret):
+        self.secret = secret
 
-def receive_guess():
-    valid = False
-    while not valid:
-        guess = input('\n')
-        if guess in allowed_words:
-            return guess
-        else:
-            print('error: invalid word')
+    def play(self, agent):
+        score = 0
+        match = False
+        while score < 6:
+            score += 1
+            state = None
+            guess = agent.guess(state)
+            clue = self.check_guess(guess)
+            if clue == '11111':
+                match = True
+                break
+        score = score if match else 7
+        return score
+
+    def check_guess(self, guess):
+        clue = ''
+        for i in range(5):
+            if guess[i] == self.secret[i]:
+                clue += '1'
+            elif guess[i] in self.secret:
+                clue += '2'
+            else:
+                clue += '0'
+        return clue
 
 
-def give_clue(guess, secret):
-    clues = ''
-    for i in range(5):
-        if guess[i] == secret[i]:
-            clues += '1'
-        elif guess[i] in secret:
-            clues += '2'
-        else:
-            clues += '0'
-    return clues
+class Agent:
+    def guess(self, state):
+        return random.choice(allowed_words)
 
-def play_wordle():
-    score = 0
-    match = False
-    while score < 6:
-        score += 1
-        guess = receive_guess()
-        clue = give_clue(guess, secret)
-        print(clue)
-        if clue == '11111':
-            match = True
-            break
-    score = score if match else 7
-    return score
+    def train(self):
+        n_words = len(allowed_words)
+        seed = 42
+        sum_score = 0
+        shuffled_words = allowed_words.copy()
+        random.Random(seed).shuffle(shuffled_words)
+        for i, secret in enumerate(shuffled_words):
+            game = Wordle(secret)
+            score = game.play(agent)
+            sum_score += score
+        print(sum_score/n_words)
 
-score = play_wordle()
-print(f'\nscore: {score}\n')
+agent = Agent()
+agent.train()
