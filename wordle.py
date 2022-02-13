@@ -4,12 +4,16 @@ IDEAS:
 * train set: test frequency
 * use all words as test set
 
+PROBLEMS:
+* need to speed up training somehow
+
 '''
 
 import os
 import pickle
 import random
 import string
+import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,22 +22,39 @@ import torch.optim as optim
 torch.manual_seed = 42
 random.seed(42)
 
-def read_words(file_name):
+def read_text_file(file_name):
     with open(file_name, 'r') as f:
         words = f.readlines()
     words = [word.strip() for word in words]
     return words
 
-allowed_words = read_words('allowed_words.txt')
+allowed_words = read_text_file('allowed_words.txt')
 word2idx = {word: i+1 for i, word in enumerate(allowed_words)}
 idx2word = {i+1: word for i, word in enumerate(allowed_words)}
 word2idx[0] = None
 n_words = len(allowed_words)
+print(f'\nPlaying wordle with {n_words} known words.')
 
 letter2idx = {letter: i+1 for i, letter in enumerate(string.ascii_lowercase)}
 idx2letter = {i+1: letter for i, letter in enumerate(string.ascii_lowercase)}
 letter2idx[0] = None
 n_letters = len(string.ascii_lowercase)
+
+# read word frequencies
+word_freqs = read_text_file('word_frequency.txt')
+word_freqs = [(wf.split(' ')[0], float(wf.split(' ')[1])) for wf in word_freqs]
+min_freq = min([freq for _, freq in word_freqs if freq > 0])
+word_freqs = [(word, freq) if freq > 0 else (word, min_freq) for word, freq in word_freqs]
+df_word_freq = pd.DataFrame(word_freqs, columns=['word','freq'])
+sum_freq = sum(df_word_freq.freq)
+df_word_freq['freq'] = df_word_freq['freq'] / sum_freq
+print(df_word_freq.sort_values('freq', ascending=False)[0:20])
+print('...')
+
+# join frequencies onto words
+word_data = [(i+1, word) for i, word in enumerate(allowed_words)]
+df_word = pd.DataFrame(word_data, columns=['index', 'word'])
+df = df_word.merge(df_word_freq, on='word', how='inner')
 
 '''
 input: (5, 11)
@@ -49,12 +70,12 @@ class Agent(nn.Module):
     # define model elements
     def __init__(self):
         super(Agent, self).__init__()
-        self.word_embedding = nn.Embedding(n_words+1, 32)
+        self.word_embedding = nn.Embedding(n_words+1, 64)
         self.letter_embedding = nn.Embedding(n_letters+1, 8)
-        self.hidden1 = nn.Linear(385, 512)
+        self.hidden1 = nn.Linear(545, 512)
         self.relu1 = nn.ReLU()
         self.output = nn.Linear(512, n_words+1)
-        self.softmax = nn.Softmax(dim = -1)
+        self.softmax = nn.Softmax(dim = 0)
 
      # forward propagate input
     def forward(self, X):
@@ -77,59 +98,48 @@ class Agent(nn.Module):
         # softmax output
         X = self.output(X)
         X = self.softmax(X)
+        X = X.unsqueeze(0) # add additional dimension
         return X
 
 class Wordle:
-    def __init__(self, secret, criterion, optimizer):
+    def __init__(self, secret):
         self.secret = secret
-        self.criterion = criterion
-        self.optimizer = optimizer
         # guess/clues better?
         self.words = []
         self.states = []
 
-    # TODO: update to play infinite rounds
     # TODO: seems like theres a key error 0 issue, this should not be predictable
-    def self_play(self, agent):
+    # TODO: create version that is actually limited ot 6 rounds
+    def self_play(self, agent, optimizer, criterion):
         # play game (forward)
         score = 0.0
         match = False
-        guessed = []
+        running_loss = 0
         while not match:
             score += 1
             X, label = self.encode()
-            probabilities = agent(X)
-            # get 1 hot encoding for guessed
-            valid_indices = np.ones(n_words+1)
-            valid_indices[0] = 0 # don't predict blank
-            # TODO: this could be more efficient
-            for i in guessed:
-                valid_indices[i] = 0
-            valid_indices = torch.from_numpy(valid_indices)
+            # forward + backward + optimize
+            probs = agent(X)
+            optimizer.zero_grad()
+            loss = criterion(probs, label)
+            loss.backward()
+            optimizer.step()
             # valid_probabilities
-            probabilities = probabilities * valid_indices
-            y_argmax = int(torch.argmax(probabilities))
+            y_argmax = int(torch.argmax(probs))
             word = idx2word[y_argmax]
-            guessed.append(y_argmax)
             # fetch best word
             state = self.check_guess(word)
+            # only store buffer of 5 items
             self.words.append(word)
             self.states.append(state)
-            # only store buffer of 5 items
             if len(self.words) > 5:
-                self.words = self.words[-5:]
-                self.states = self.states[-5:]
+                self.words = self.words[1:]
+                self.states = self.states[1:]
+            # exit game if correct word guessed
             if state == '33333':
                 match = True
-        # encode score
-        target = torch.tensor([[1.0]], requires_grad=True)
-        actual = torch.tensor([[score]], requires_grad=True)
-        # backward + optimize
-        optimizer.zero_grad()
-        loss = criterion(target, actual)
-        loss.backward()
-        optimizer.step() 
-        return agent, score, float(loss)
+            running_loss += float(loss)
+        return score, running_loss / score
 
     def encode(self):
         assert(len(self.words) == len(self.states))
@@ -149,7 +159,6 @@ class Wordle:
         y = torch.tensor([word2idx[self.secret]])
         # encode label
         y = nn.functional.one_hot(y, num_classes=n_words+1)
-        y = torch.flatten(y)
         y = y.type('torch.FloatTensor')
         return X, y
 
@@ -185,32 +194,28 @@ def print_progress_bar(iteration, total, prefix="", suffix="", length=30, fill="
     if iteration == total: 
         print()
 
-# MAIN
-
+# hyperparameters
 agent = Agent()
-criterion = nn.MSELoss()
-optimizer = optim.Adam(agent.parameters(), lr=3e-4)
-# optimizer = optim.SGD(agent.parameters(), lr=0.001, momentum=0.9)
-
-# train
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(agent.parameters())
 n_epochs = 10
+games_per_epoch = 1000
+
+# training loop
+print(f'\nPlaying self {n_epochs * games_per_epoch} times.')
 for e in range(n_epochs):
-    # shuffle words
-    shuffled_words = allowed_words.copy()
-    random.shuffle(shuffled_words)
-    # diagnostics
     running_score = 0
     running_loss = 0
-    # play wordle
-    # TODO: Don't play for every single word...this should be the test set
-    #       Instead perhaps sample from natural word occurence frequency
-    for i, secret in enumerate(shuffled_words):
-        game = Wordle(secret, criterion, optimizer)
-        agent, score, loss = game.self_play(agent)
+    for i in range(games_per_epoch):
+        # sample word for game
+        secret = np.random.choice(df.word, p=df.freq)
+        # play wordle (forward)
+        game = Wordle(secret)
+        score, loss = game.self_play(agent, optimizer, criterion)
+        # diagnostics
         running_score += score
         running_loss += loss
         avg_score = running_score / (i+1)
-        print_progress_bar(i, n_words, prefix=f'Training epoch {e+1}/{n_epochs}: ', suffix=f'loss={loss:.6f}, ave_score={running_score/(i+1):.3f}')
-
-# save
-torch.save(agent.state_dict(), 'agent.pth')
+        print_progress_bar(i, games_per_epoch, prefix=f'Training epoch {e+1}/{n_epochs}: ', suffix=f"ave_score={running_score/(i+1):.2f}, loss={loss}, secret={secret}")
+    # save
+    torch.save(agent.state_dict(), 'agent.pth')
