@@ -88,32 +88,45 @@ class Wordle:
         self.words = []
         self.states = []
 
+    # TODO: update to play infinite rounds
+    # TODO: seems like theres a key error 0 issue, this should not be predictable
     def self_play(self, agent):
         # play game (forward)
-        score = 0
+        score = 0.0
         match = False
-        outputs = []
-        labels = []
-        while score < 6:
+        guessed = []
+        while not match:
             score += 1
             X, label = self.encode()
-            labels.append(label)
-            pred_prob = agent(X)
-            outputs.append(pred_prob)
-            y_argmax = int(torch.argmax(pred_prob))
+            probabilities = agent(X)
+            # get 1 hot encoding for guessed
+            valid_indices = np.ones(n_words+1)
+            valid_indices[0] = 0 # don't predict blank
+            # TODO: this could be more efficient
+            for i in guessed:
+                valid_indices[i] = 0
+            valid_indices = torch.from_numpy(valid_indices)
+            # valid_probabilities
+            probabilities = probabilities * valid_indices
+            y_argmax = int(torch.argmax(probabilities))
             word = idx2word[y_argmax]
+            guessed.append(y_argmax)
+            # fetch best word
             state = self.check_guess(word)
             self.words.append(word)
             self.states.append(state)
+            # only store buffer of 5 items
+            if len(self.words) > 5:
+                self.words = self.words[-5:]
+                self.states = self.states[-5:]
             if state == '33333':
                 match = True
-        outputs = torch.stack(outputs)
-        labels = torch.stack(labels)
-        score = score if match else 7
-        
+        # encode score
+        target = torch.tensor([[1.0]], requires_grad=True)
+        actual = torch.tensor([[score]], requires_grad=True)
         # backward + optimize
         optimizer.zero_grad()
-        loss = criterion(outputs, labels)
+        loss = criterion(target, actual)
         loss.backward()
         optimizer.step() 
         return agent, score, float(loss)
@@ -175,9 +188,9 @@ def print_progress_bar(iteration, total, prefix="", suffix="", length=30, fill="
 # MAIN
 
 agent = Agent()
-criterion = nn.CrossEntropyLoss()
-#optimizer = optim.Adam(agent.parameters(), lr=3e-4)
-optimizer = optim.SGD(agent.parameters(), lr=0.001, momentum=0.9)
+criterion = nn.MSELoss()
+optimizer = optim.Adam(agent.parameters(), lr=3e-4)
+# optimizer = optim.SGD(agent.parameters(), lr=0.001, momentum=0.9)
 
 # train
 n_epochs = 10
@@ -189,6 +202,8 @@ for e in range(n_epochs):
     running_score = 0
     running_loss = 0
     # play wordle
+    # TODO: Don't play for every single word...this should be the test set
+    #       Instead perhaps sample from natural word occurence frequency
     for i, secret in enumerate(shuffled_words):
         game = Wordle(secret, criterion, optimizer)
         agent, score, loss = game.self_play(agent)
