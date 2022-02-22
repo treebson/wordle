@@ -1,9 +1,3 @@
-'''
-state:
-action:
-reward:
-'''
-
 import random
 import math
 import string
@@ -132,9 +126,12 @@ class Wordle:
             self.clues.append(clue)
             done = clue == '33333'
             next_state = self.state()
-            return next_state, done
+            reward = sum([int(x) for x in list(clue)])
+            
+            reward = torch.tensor([[reward]])
+            return reward, next_state, done
         else:
-            return None, True
+            return None, None, True
 
     # TODO: fix incomplete logic
     def check(self, guess):
@@ -230,181 +227,16 @@ for e in range(N_EPOCHS):
     for g in range(N_GAMES_PER_EPOCH):
         env.reset()
         state = env.state()
-        action_states = []
         # play game
         for score in range(N_ROUNDS_PER_GAME):
             action = select_action(state)
-            next_state, done = env.step(action.item())
-            action_states.append((state, action, next_state))
+            reward, next_state, done = env.step(action.item())
+            memory.push(state, action, next_state, reward)
             state = next_state
             if done:
-                break
-        # calculate reward
-        reward = N_ROUNDS_PER_GAME - env.score
-        reward = torch.tensor([[reward]])
-        # store in replay memory
-        for state, action, next_state in action_states:
-            memory.push(state, action, next_state, reward)
+                break          
         # train
         loss = optimize_model()
-        print(loss)
         # update target net every N games
         if g % TARGET_UPDATE == 0:
             target_net.load_state_dict(policy_net.state_dict())
-        
-
-
- 
-
-
-
-# '''
-# IDEAS:
-# * sample words by frequency
-# * train set: test frequency
-# * use all words as test set
-
-# PROBLEMS:
-# * need to speed up training somehow
-
-# '''
-
-# import os
-# import pickle
-# import random
-# import string
-# import pandas as pd
-# import numpy as np
-# import torch
-# import torch.nn as nn
-# import torch.optim as optim
-
-# torch.manual_seed = 42
-# random.seed(42)
-
-# '''
-# input: (5, 11)
-# - 5 rows for each prior prediction (init to -1)
-# - 11 columns:
-#     - 1 neuron for word guessed (passed into word embedding)
-#     - 5 neurons for each letter (passed into letter embedding)
-#     - 5 neurons for state (clues returned for each word, 0 = none, 1 = grey, 2 = yellow, 3 = green)
-
-# class Wordle:
-#     def __init__(self, secret):
-#         self.secret = secret
-#         # guess/clues better?
-#         self.words = []
-#         self.states = []
-
-#     # TODO: seems like theres a key error 0 issue, this should not be predictable
-#     # TODO: create version that is actually limited ot 6 rounds
-#     def self_play(self, agent, optimizer, criterion):
-#         # play game (forward)
-#         score = 0.0
-#         match = False
-#         running_loss = 0
-#         while not match:
-#             score += 1
-#             X, label = self.encode()
-#             # forward + backward + optimize
-#             probs = agent(X)
-#             optimizer.zero_grad()
-#             loss = criterion(probs, label)
-#             loss.backward()
-#             optimizer.step()
-#             # valid_probabilities
-#             y_argmax = int(torch.argmax(probs))
-#             word = idx2word[y_argmax]
-#             # fetch best word
-#             state = self.check_guess(word)
-#             # only store buffer of 5 items
-#             self.words.append(word)
-#             self.states.append(state)
-#             if len(self.words) > 5:
-#                 self.words = self.words[1:]
-#                 self.states = self.states[1:]
-#             # exit game if correct word guessed
-#             if state == '33333':
-#                 match = True
-#             running_loss += float(loss)
-#         return score, running_loss / score
-
-#     def encode(self):
-#         assert(len(self.words) == len(self.states))
-#         X = []
-#         for i in range(len(self.words)):
-#             row = []
-#             row.append(word2idx[self.words[i]])
-#             for l in list(self.words[i]):
-#                 row.append(letter2idx[l])
-#             for s in self.states[i]:
-#                 row.append(int(s))
-#             X.append(row)
-#         for _ in range(5 - len(self.words)):
-#             X.append([0] * 11)
-#         X = np.array(X)
-#         X = torch.from_numpy(X)
-#         y = torch.tensor([word2idx[self.secret]])
-#         # encode label
-#         y = nn.functional.one_hot(y, num_classes=n_words+1)
-#         y = y.type('torch.FloatTensor')
-#         return X, y
-
-#     def possible_words(self):
-#         possible_words = []
-#         for word, state in self.words.zip(self.states):
-#             print(word, state)
-
-#     def check_guess(self, guess):
-#         clue = ''
-#         for i in range(5):
-#             if guess[i] == self.secret[i]:
-#                 clue += '3'
-#             elif guess[i] in self.secret:
-#                 clue += '2'
-#             else:
-#                 clue += '1'
-#         return clue
-
-
-# def print_progress_bar(iteration, total, prefix="", suffix="", length=30, fill="=", head=">", track="."):
-#     iteration += 1
-#     filled_length = int(length * iteration // total)
-#     if filled_length == 0:
-#         bar = track * length
-#     elif filled_length == 1:
-#         bar = head + track * (length - 1)
-#     elif filled_length == length:
-#         bar = fill * filled_length
-#     else:
-#         bar = fill * (filled_length-1) + ">" + "." * (length-filled_length)
-#     print("\r" + prefix + "[" + bar + "] " + str(iteration) + "/" + str(total), suffix, end = "\r")
-#     if iteration == total: 
-#         print()
-
-# # hyperparameters
-# agent = Agent()
-# criterion = nn.CrossEntropyLoss()
-# optimizer = optim.Adam(agent.parameters())
-# n_epochs = 10
-# games_per_epoch = 1000
-
-# # training loop
-# print(f'\nPlaying self {n_epochs * games_per_epoch} times.')
-# for e in range(n_epochs):
-#     running_score = 0
-#     running_loss = 0
-#     for i in range(games_per_epoch):
-#         # sample word for game
-#         
-#         # play wordle (forward)
-#         game = Wordle(secret)
-#         score, loss = game.self_play(agent, optimizer, criterion)
-#         # diagnostics
-#         running_score += score
-#         running_loss += loss
-#         avg_score = running_score / (i+1)
-#         print_progress_bar(i, games_per_epoch, prefix=f'Training epoch {e+1}/{n_epochs}: ', suffix=f"ave_score={running_score/(i+1):.2f}, loss={loss}, secret={secret}")
-#     # save
-#     torch.save(agent.state_dict(), 'agent.pth')
