@@ -38,11 +38,9 @@ class Wordle:
             self.clues.append(clue)
             done = clue == '33333'
             next_state = self.state()
-            reward = sum([int(x) for x in list(clue)])
-            reward = torch.tensor([[reward]])
-            return reward, next_state, done
+            return next_state, done
         else:
-            return None, None, True
+            return None, True
 
     # TODO: fix incomplete logic
     def check(self, guess):

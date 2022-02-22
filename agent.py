@@ -8,11 +8,11 @@ import data
 class DQN(nn.Module):
     def __init__(self):
         super(DQN, self).__init__()
-        self.word_embedding = nn.Embedding(data.n_words+1, 64)
-        self.letter_embedding = nn.Embedding(data.n_letters+1, 8)
+        self.word_embedding = nn.Embedding(data.n_words + 1, 64)
+        self.letter_embedding = nn.Embedding(data.n_letters + 1, 8)
         self.hidden1 = nn.Linear(545, 512)
         self.relu1 = nn.ReLU()
-        self.output = nn.Linear(512, data.n_words)
+        self.output = nn.Linear(512, data.n_words + 1)
         self.softmax = nn.Softmax(dim = -1)
 
      # forward propagate input

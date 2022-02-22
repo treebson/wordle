@@ -18,7 +18,7 @@ import data
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
-class Memory:
+class ReplayMemory:
     def __init__(self, capacity):
         self.memory = deque([], maxlen=capacity)
     
@@ -32,16 +32,13 @@ class Memory:
     def __len__(self):
         return len(self.memory)
 
-# Hyperparameters
-# TODO: tweak
-
 policy_net = DQN()
 target_net = DQN()
 target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
 optimizer = optim.RMSprop(policy_net.parameters())
-memory = Memory(config.replay_memory_size)
+memory = ReplayMemory(config.replay_memory_size)
 
 steps_done = 0
 
@@ -77,7 +74,7 @@ def optimize_model():
 
     next_state_values = torch.zeros(config.batch_size)
     next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0].detach()
-    expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+    expected_state_action_values = (next_state_values * config.gamma) + reward_batch
 
     # compute Huber loss
     criterion = nn.SmoothL1Loss()
@@ -92,22 +89,47 @@ def optimize_model():
     optimizer.step()
     return float(loss)
 
+def print_progress_bar(iteration, total, prefix="", suffix="", length=30, fill="=", head=">", track="."):
+    iteration += 1
+    filled_length = int(length * iteration // total)
+    if filled_length == 0:
+        bar = track * length
+    elif filled_length == 1:
+        bar = head + track * (length - 1)
+    elif filled_length == length:
+        bar = fill * filled_length
+    else:
+        bar = fill * (filled_length-1) + ">" + "." * (length-filled_length)
+    print("\r" + prefix + "[" + bar + "] " + str(iteration) + "/" + str(total), suffix, end = "\r")
+    if iteration == total: 
+        print()
+
 # main training loop
 env = Wordle()
 for e in range(config.n_epochs):
     for g in range(config.n_games_per_epoch):
         env.reset()
         state = env.state()
+        action_states = []
         # play game
         for score in range(config.n_rounds_per_game):
             action = select_action(state)
-            reward, next_state, done = env.step(action.item())
-            memory.push(state, action, next_state, reward)
+            next_state, done = env.step(action.item())
+            action_states.append((state, action, next_state))
             state = next_state
             if done:
-                break          
+                break
+        # calculate reward
+        reward = config.n_rounds_per_game - env.score
+        reward = torch.tensor([[reward]])
+        # store in replay memory
+        for state, action, next_state in action_states:
+            memory.push(state, action, next_state, reward)
         # train
         loss = optimize_model()
         # update target net every N games
         if g % config.target_update == 0:
             target_net.load_state_dict(policy_net.state_dict())
+        print_progress_bar(g, config.n_games_per_epoch, 
+            prefix=f'Training epoch {e+1}/{config.n_epochs}: ', 
+            suffix=f"loss={loss}, secret={env.secret}")
