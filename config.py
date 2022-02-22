@@ -1,0 +1,1 @@
+n_rounds_per_game = 6
