@@ -19,7 +19,7 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.word_embedding = nn.Embedding(data.n_words + 1, config.word_embedding_size)
         self.letter_embedding = nn.Embedding(data.n_letters + 1, config.letter_embedding_size)
-        self.dense1 = nn.Linear(545, num_features)
+        self.dense1 = nn.Linear(745, num_features)
         self.dense2 = nn.Linear(num_features, num_features)
         self.relu = nn.LeakyReLU()
     
