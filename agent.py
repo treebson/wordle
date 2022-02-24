@@ -1,40 +1,101 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+from collections import namedtuple, deque
 
 import config
 import data
 
+num_actions = data.n_words
+num_features = 512
+
+# state encoder
+class Encoder(nn.Module):
+
+    def __init__(self):
+        super(Encoder, self).__init__()
+        self.word_embedding = nn.Embedding(data.n_words + 1, config.word_embedding_size)
+        self.letter_embedding = nn.Embedding(data.n_letters + 1, config.letter_embedding_size)
+        self.dense1 = nn.Linear(545, num_features)
+        self.dense2 = nn.Linear(num_features, num_features)
+        self.relu = nn.LeakyReLU()
+    
+    def forward(self, x):
+        x = x.view(-1, 5, 11)
+        # words
+        x_words = x[:, :, 0]
+        x_words = self.word_embedding(x_words)
+        x_words = torch.flatten(x_words, 1, -1)
+        # letters
+        x_letters = x[:, :, 1:6]
+        x_letters = self.letter_embedding(x_letters)
+        x_letters = torch.flatten(x_letters, 1, -1)
+        # clues
+        x_clues = x[:, :, 6:]
+        x_clues = torch.flatten(x_clues, 1, -1)
+        # combine
+        x = torch.cat((x_words, x_letters, x_clues), -1)
+        # dense layers
+        x = self.dense1(x)
+        x = self.relu(x)
+        x = self.dense2(x)
+        return x
+
+# intrinsic curiosity module
+class ICM(nn.Module):
+
+    def __init__(self):
+        super(ICM, self).__init__()
+        self.encoder = Encoder()
+        self.inverse_net = nn.Sequential(
+            nn.Linear(num_features * 2, 1024),
+            nn.LeakyReLU(),
+            nn.Linear(1024, num_actions),
+            nn.Softmax(dim = -1)
+        )
+        self.forward_net = nn.Sequential(
+            nn.Linear(num_features + num_actions, 1024),
+            nn.LeakyReLU(),
+            nn.Linear(1024, num_features)
+        )
+
+    def forward(self, state, next_state, action):
+        state_encoded = self.encoder(state)
+        next_state_encoded = self.encoder(next_state)
+        action_logits = self.inverse_net(torch.cat((state_encoded, next_state_encoded), 1))
+        next_state_encoded_pred = self.forward_net(torch.cat((state_encoded, action), 1))
+        return action_logits, next_state_encoded_pred, next_state_encoded
+
 # deep q network
 class DQN(nn.Module):
+
     def __init__(self):
         super(DQN, self).__init__()
-        self.word_embedding = nn.Embedding(data.n_words + 1, 64)
-        self.letter_embedding = nn.Embedding(data.n_letters + 1, 8)
-        self.hidden1 = nn.Linear(545, 512)
-        self.relu1 = nn.ReLU()
-        self.output = nn.Linear(512, data.n_words + 1)
+        self.encoder = Encoder()
+        self.relu = nn.LeakyReLU()
+        self.output = nn.Linear(num_features, num_actions)
         self.softmax = nn.Softmax(dim = -1)
 
-     # forward propagate input
-    def forward(self, X):
-        X = X.view(-1, 5, 11)
-        # words
-        X_words = X[:, :, 0]
-        X_words = self.word_embedding(X_words)
-        X_words = torch.flatten(X_words, 1, -1)
-        # letters
-        X_letters = X[:, :, 1:6]
-        X_letters = self.letter_embedding(X_letters)
-        X_letters = torch.flatten(X_letters, 1, -1)
-        # clue
-        X_clue = X[:, :, 6:]
-        X_clue = torch.flatten(X_clue, 1, -1)
-        # combine
-        X = torch.cat((X_words, X_letters, X_clue), -1)
-        # hidden layers
-        X = self.hidden1(X)
-        X = self.relu1(X)
-        # softmax output
-        X = self.output(X)
-        X = self.softmax(X)
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.relu(x)
+        x = self.output(x)
+        x = self.softmax(x)
         return X
+
+# experience replay
+Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+class ReplayMemory:
+
+    def __init__(self, capacity):
+        self.memory = deque([], maxlen=capacity)
+    
+    def push(self, *args):
+        self.memory.append(Transition(*args))
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+    
+    def __len__(self):
+        return len(self.memory)
