@@ -1,3 +1,5 @@
+import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -51,8 +53,7 @@ class ICM(nn.Module):
         self.inverse_net = nn.Sequential(
             nn.Linear(num_features * 2, 1024),
             nn.LeakyReLU(),
-            nn.Linear(1024, num_actions),
-            nn.Softmax(dim = -1)
+            nn.Linear(1024, num_actions)
         )
         self.forward_net = nn.Sequential(
             nn.Linear(num_features + num_actions, 1024),
@@ -75,14 +76,12 @@ class DQN(nn.Module):
         self.encoder = Encoder()
         self.relu = nn.LeakyReLU()
         self.output = nn.Linear(num_features, num_actions)
-        self.softmax = nn.Softmax(dim = -1)
 
     def forward(self, x):
         x = self.encoder(x)
         x = self.relu(x)
         x = self.output(x)
-        x = self.softmax(x)
-        return X
+        return x
 
 # experience replay
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
@@ -95,7 +94,13 @@ class ReplayMemory:
         self.memory.append(Transition(*args))
 
     def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
+        transitions = random.sample(self.memory, batch_size)
+        batch = Transition(*zip(*transitions)) # transpose batch
+        state_batch = torch.stack(batch.state)
+        action_batch = torch.cat(batch.action)
+        reward_batch = torch.cat(batch.reward)
+        next_state_batch = torch.stack(batch.next_state)
+        return state_batch, action_batch, reward_batch, next_state_batch
     
     def __len__(self):
         return len(self.memory)

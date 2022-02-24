@@ -1,9 +1,12 @@
 # wordle
 
-attempting to beat wordle with pytorch and deep reinforcement learning
+a humble attempt at beating wordle using pytorch and deep reinforcement learning
 - [daily wordle](https://www.nytimes.com/games/wordle/index.html)
 - [deep q learning](https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf)
 - [curiosity-driven exploration](https://arxiv.org/pdf/1705.05363.pdf)
 
 ## todo
-- package dependencies
+- list package dependencies
+- weight initialisation
+- hyperparameter tuning
+- evaluation `test.py`
