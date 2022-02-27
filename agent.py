@@ -68,39 +68,21 @@ class ICM(nn.Module):
         next_state_encoded_pred = self.forward_net(torch.cat((state_encoded, action), 1))
         return action_logits, next_state_encoded_pred, next_state_encoded
 
-# deep q network
-class DQN(nn.Module):
-
+# actor critic
+SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
+class Policy(nn.Module):
     def __init__(self):
-        super(DQN, self).__init__()
+        super(Policy, self).__init__()
         self.encoder = Encoder()
         self.relu = nn.LeakyReLU()
-        self.output = nn.Linear(num_features, num_actions)
-
+        self.action = nn.Linear(num_features, num_actions) # actor
+        self.value = nn.Linear(num_features, 1) # critic
+        self.saved_actions = []
+        self.saved_rewards = []
+    
     def forward(self, x):
         x = self.encoder(x)
         x = self.relu(x)
-        x = self.output(x)
-        return x
-
-# experience replay
-Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
-class ReplayMemory:
-
-    def __init__(self, capacity):
-        self.memory = deque([], maxlen=capacity)
-    
-    def push(self, *args):
-        self.memory.append(Transition(*args))
-
-    def sample(self, batch_size):
-        transitions = random.sample(self.memory, batch_size)
-        batch = Transition(*zip(*transitions)) # transpose batch
-        state_batch = torch.stack(batch.state)
-        action_batch = torch.cat(batch.action)
-        reward_batch = torch.cat(batch.reward)
-        next_state_batch = torch.stack(batch.next_state)
-        return state_batch, action_batch, reward_batch, next_state_batch
-    
-    def __len__(self):
-        return len(self.memory)
+        action_prob = F.softmax(self.action(x), dim=-1)
+        state_values = self.value(x)
+        return action_prob, state_values

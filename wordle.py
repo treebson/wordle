@@ -17,17 +17,16 @@ class Wordle:
     def state(self):
         # 5 rows for each previous state
         # 11 columns - 1 word, 5 letters, 5 clues
-        X = np.zeros((config.n_rounds_per_game - 1, 11))
+        x = np.zeros((config.n_rounds_per_game - 1, 11))
         for i in range(len(self.clues)):
             # encode index
             guess = self.guesses[i]
             word_idx = data.word2idx[guess]
             letter_idxs = [data.letter2idx[letter] for letter in guess]
             clues = [int(clue) for clue in self.clues[i]]
-            X[i] = [word_idx] + letter_idxs + clues
-        X = torch.from_numpy(X)
-        X = X.type('torch.IntTensor')
-        return X
+            x[i] = [word_idx] + letter_idxs + clues
+        x = torch.from_numpy(x).type(torch.int64)
+        return x
 
     def step(self, action):
         self.score += 1
@@ -59,4 +58,4 @@ class Wordle:
         self.guesses = []
         self.clues = []
         self.score = 0
-        return
+        return self.state()

@@ -1,6 +1,8 @@
 import random
 import math
 import string
+import os
+import shutil
 import numpy as np
 import pandas as pd
 
@@ -8,9 +10,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.distributions import Categorical
 
 from wordle import Wordle
-from agent import DQN, ICM, ReplayMemory, Transition
+from agent import ICM, Policy, SavedAction
 
 import config
 import data
@@ -18,21 +21,22 @@ import data
 torch.manual_seed(42)
 
 # instantiate agent components
-dqn_policy = DQN()
-dqn_target = DQN()
+policy = Policy()
 icm = ICM()
-dqn_target.load_state_dict(dqn_policy.state_dict())
-dqn_policy.train()
-dqn_target.eval()
+policy.train()
 icm.train()
 
 # loss functions
+policy_criterion = nn.SmoothL1Loss()
 inv_criterion = nn.CrossEntropyLoss()
 fwd_criterion = nn.MSELoss()
-dqn_criterion = nn.SmoothL1Loss()
 
 # unified optimizer
-optimizer = optim.Adam(list(dqn_policy.parameters()) + list(icm.parameters()), lr=config.learning_rate)
+optimizer = optim.Adam(list(policy.parameters()) + list(icm.parameters()), lr=config.learning_rate)
+
+# constants
+eps = np.finfo(np.float32).eps.item()
+c = config.curiosity_coeff
 
 # favourite diagnostic function
 def print_progress_bar(iteration, total, prefix='', suffix='', length=30, fill='=', head='>', track='.'):
@@ -52,131 +56,115 @@ def print_progress_bar(iteration, total, prefix='', suffix='', length=30, fill='
         print()
     return message
 
+def reset_directory(path):
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    os.mkdir(path)
+
 # select an action using epsilon greedy policy
-steps_done = 0
 def select_action(state):
-    global steps_done
-    sample = random.random()
-    eps_threshold = config.eps_start + (config.eps_start - config.eps_end) * math.exp(-1. * steps_done / config.eps_decay)
-    steps_done += 1
-    # exploit (action with highest expected reward)
-    if sample > eps_threshold:
-        with torch.no_grad():
-            action = dqn_policy(state).max(1)[1].item()
-        strategy = 'exploit'
-    # explore (random action)
-    else:
-        action = random.randrange(data.n_words)
-        strategy = 'explore'
-    action = torch.tensor([action])
-    return action, strategy
+    probs, state_value = policy(state)
+    m = Categorical(probs)
+    action = m.sample()
+    policy.saved_actions.append(SavedAction(m.log_prob(action), state_value))
+    action = torch.tensor([action.item()])
+    return action
 
-import os
-if os.path.isdir('output'):
-    os.rmdir('output')
-os.mkdir('output')
-
-# main training loop
-env = Wordle()
-memory = ReplayMemory(config.replay_memory_size)
-# TODO: consider removing concept of epochs completely, replace with running step count
-for epoch in range(config.n_epochs):
-    running_score = 0
-    running_reward = 0
-    losses = {'combined': 0, 'curiosity': 0, 'policy': 0}
-    strategies = {'explore': 0, 'exploit': 0}
-    guesses = {}
-    skips = 0
-    for game in range(config.n_games_per_epoch):
-        env.reset()
-        state = env.state()
-        replay_buffer = []
-        inv_losses = []
-        fwd_losses = []
-        # play game
-        for score in range(config.n_rounds_per_game):
-            # select action (epsilon greedy)
-            action_index, strategy = select_action(state)
-            strategies[strategy] += 1
-            action_onehot = F.one_hot(action_index, num_classes=data.n_words).float()
-            guess_index = torch.argmax(action_onehot, dim=1).item() + 1
-            guess = data.idx2word[guess_index]
-            if guess in guesses:
-                guesses[guess] += 1
-            else:
-                guesses[guess] = 1
-            # receive next state from environment
-            next_state, done = env.step(guess_index)
-            if not done:
-                # forward pass (icm)
+# training loop
+def main():
+    reset_directory('output')
+    env = Wordle()
+    # run infinitely many episodes
+    for epoch in range(config.n_epochs):
+        running_reward = 0.0
+        running_score = 0.0
+        losses = {'total': 0.0, 'actor': 0.0, 'critic': 0.0, 'icm': 0.0}
+        guesses = {}
+        for game in range(config.n_games_per_epoch):
+            state = env.reset()
+            curiosity_losses = []
+            intrinsic_rewards = []
+            # play a game
+            for score in range(config.n_rounds_per_game):
+                action_index = select_action(state)
+                action_onehot = F.one_hot(action_index, num_classes=data.n_words).float()
+                guess_index = torch.argmax(action_onehot, dim=1).item() + 1
+                guessed_word = data.idx2word[guess_index]
+                # guesses[guess] += 1 if guess in guesses else guesses[guess] = 1
+                next_state, done = env.step(guess_index)
+                if done:
+                    break
+                # intrinsic reward
                 pred_logits, pred_phi, phi = icm(state, next_state, action_onehot)
                 inv_loss = inv_criterion(pred_logits, action_onehot)
                 fwd_loss = fwd_criterion(pred_phi, phi) / 2
                 intrinsic_reward = config.intrinsic_coeff * fwd_loss.detach()
-                # add to buffers
-                replay_buffer.append((state, action_index, next_state, intrinsic_reward))
-                inv_losses.append(inv_loss)
-                fwd_losses.append(fwd_loss)
-                # step to next state
+                curiosity_loss = (1 - c) * inv_loss + c * fwd_loss
+                curiosity_losses.append(curiosity_loss)
+                intrinsic_rewards.append(intrinsic_reward)
                 state = next_state
-            else:
-                break
-        running_score += env.score
-        # reward from environment
-        extrinsic_reward = config.n_rounds_per_game - env.score
-        extrinsic_reward = torch.tensor([extrinsic_reward], dtype=torch.float)
-        # add to experience replay
-        for state, action, next_state, intrinsic_reward in replay_buffer:
-            reward = intrinsic_reward + extrinsic_reward
-            running_reward += float(reward)
-            memory.push(state, action, next_state, reward)
-        # sample batch from replay memory
-        if len(memory) < config.batch_size:
-            skips += 1
-            continue
-        state_batch, action_batch, reward_batch, next_state_batch = memory.sample(config.batch_size)
-        # forward pass (dqn)
-        q_values = dqn_policy(state_batch).gather(1, action_batch.unsqueeze(1))
-        next_q_values = dqn_target(next_state_batch).detach().max(1)[0]
-        target_q_values = reward_batch + (config.discount_factor * next_q_values)
-        target_q_values = target_q_values.unsqueeze(1)
-        # calculate loss
-        policy_loss = dqn_criterion(q_values, target_q_values)
-        c = config.curiosity_coeff
-        curiosity_loss = sum([(1 - c) * inv + c * fwd for inv, fwd in zip(inv_losses, fwd_losses)])
-        combined_loss = policy_loss + curiosity_loss
-        losses['combined'] += float(combined_loss)
-        losses['curiosity'] += float(curiosity_loss)
-        losses['policy'] += float(policy_loss)
-        # optimise model
-        optimizer.zero_grad()
-        combined_loss.backward()
-        optimizer.step()
-        # update target net every n games
-        if game % config.target_update == 0:
-            dqn_target.load_state_dict(dqn_policy.state_dict())
-        # diagnostics
-        ave_score = running_score / (game + 1)
-        ave_reward = running_reward / (game + 1)
-        ave_combined_loss = losses['combined'] / (game - skips + 1)
-        ave_curiosity_loss = losses['curiosity'] / (game - skips + 1)
-        ave_policy_loss = losses['policy'] / (game - skips + 1)
-        top_guesses = dict(sorted(guesses.items(), key=lambda x: x[1], reverse=True)[:5])
-        metrics = {
-            'avg_score': round(ave_score, 6),
-            'avg_reward': round(ave_reward, 6),
-            'explore': round(strategies['explore'] / (strategies['explore'] + strategies['exploit']), 3),
-            'total_loss': round(ave_combined_loss, 6),
-            'icm_loss': round(ave_curiosity_loss, 6),
-            'dqn_loss': round(ave_policy_loss, 6),
-            'top_guesses': top_guesses
-        }
-        prefix = f'Epoch {epoch+1}/{config.n_epochs}:'
-        suffix = f'games played, metrics: {metrics}'
-        message = print_progress_bar(game, config.n_games_per_epoch, prefix=prefix, suffix=suffix)
-    with open('output/log.txt', 'a') as log_file:
-        log_file.write(message)
-    torch.save(dqn_policy.state_dict(), 'output/dqn.pth')
-    torch.save(icm.state_dict(), 'output/icm.pth')
+            running_score += env.score
+            # extrinsic reward
+            extrinsic = config.n_rounds_per_game - env.score
+            extrinsic = torch.tensor([extrinsic], dtype=torch.float)
+            for intrinsic in intrinsic_rewards:
+                reward = intrinsic + extrinsic
+                policy.saved_rewards.append(reward)
+                running_reward += float(reward)
+            # calculate true values using rewards from environment
+            R = 0
+            returns = [] # true values
+            for r in policy.saved_rewards[::-1]:
+                R = r * config.discount_factor * R
+                returns.insert(0, R)
+            returns = torch.tensor(returns)
+            returns = (returns - returns.mean()) / (returns.std() + eps)
+            # calculate loss
+            policy_losses = [] # actor (policy) loss
+            value_losses = [] # critic (value) loss
+            for (log_prob, value), R in zip(policy.saved_actions, returns):
+                advantage = R - value.item()
+                policy_losses.append(-log_prob * advantage)
+                value_losses.append(policy_criterion(value.squeeze(1), torch.tensor([R])))
+            actor_loss = torch.stack(policy_losses).sum()
+            critic_loss = torch.stack(value_losses).sum()
+            icm_loss = torch.stack(curiosity_losses).sum()
+            # optimize model
+            optimizer.zero_grad()
+            combined_loss = actor_loss + critic_loss + icm_loss
+            combined_loss.backward()
+            optimizer.step()
+            # TODO: move out of model
+            del policy.saved_rewards[:]
+            del policy.saved_actions[:]
+            # diagnostics
+            # avg score, avg reward, 
+            losses['total'] += float(combined_loss)
+            losses['actor'] += float(actor_loss)
+            losses['critic'] += float(critic_loss)
+            losses['icm'] += float(icm_loss)
+            ave_score = running_score / (game + 1)
+            ave_reward = running_reward / (game + 1)
+            ave_total_loss = losses['total'] / (game + 1)
+            ave_actor_loss = losses['actor'] / (game + 1)
+            ave_critic_loss = losses['critic'] / (game + 1)
+            ave_icm_loss = losses['icm'] / (game + 1)
+            # top_guesses = dict(sorted(guesses.items(), key=lambda x: x[1], reverse=True)[:5])
+            metrics = {
+                'avg_score': round(ave_score, 6),
+                'avg_reward': round(ave_reward, 6),
+                'total_loss': round(ave_total_loss, 6),
+                'actor_loss': round(ave_actor_loss, 6),
+                'critic_loss': round(ave_critic_loss, 6),
+                'icm_loss': round(ave_icm_loss, 6)
+            }
+            prefix = f'Epoch {epoch+1}/{config.n_epochs}:'
+            suffix = f'games played, metrics: {metrics}'
+            message = print_progress_bar(game, config.n_games_per_epoch, prefix=prefix, suffix=suffix)
+        with open('output/log.txt', 'a') as log_file:
+            log_file.write(message)
+        torch.save(policy.state_dict(), 'output/policy.pth')
+        torch.save(icm.state_dict(), 'output/icm.pth')
     
-        
+if __name__ == '__main__':
+    main()
