@@ -9,7 +9,7 @@ def read_text_file(file_name):
 
 # words
 #words = read_text_file('data/possible_words.txt')
-words = ['which', 'their', 'would', 'other', 'there', 'these', 'about', 'under', 'first', 'could']
+words = ['which', 'their', 'would', 'other', 'there', 'these', 'about', 'under', 'first', 'could', 'shall', 'after', 'those', 'being', 'where', 'three', 'found', 'great', 'state', 'right', 'water', 'order', 'given', 'place', 'might', 'while', 'large', 'every', 'power', 'small', 'still', 'world', 'think', 'point', 'never', 'above', 'since', 'value', 'taken', 'until', 'again', 'court', 'study', 'whole', 'among', 'often', 'known', 'group', 'least', 'level', 'total', 'going', 'local', 'light', 'early', 'later', 'house', 'women', 'shown', 'human', 'money', 'using', 'field', 'along', 'death', 'whose', 'young', 'cause', 'class', 'short', 'child', 'third', 'party', 'force', 'basis', 'thing', 'paper', 'quite', 'trade', 'lower', 'white', 'night', 'sense', 'clear', 'major', 'price', 'below', 'issue', 'model', 'close', 'range', 'heart', 'began', 'table', 'space', 'woman', 'plant', 'black', 'board', 'stock']
 word2idx = {word: i+1 for i, word in enumerate(words)}
 idx2word = {i+1: word for i, word in enumerate(words)}
 n_words = len(words)

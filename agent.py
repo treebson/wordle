@@ -53,8 +53,6 @@ class ActorCritic(nn.Module):
         self.relu = nn.LeakyReLU()
         self.actor = nn.Linear(num_features, num_actions)
         self.critic = nn.Linear(num_features, 1)
-        # critic
-        self.critic = nn.Linear(num_features, 1)
         self._initialize_weights()
 
     def _initialize_weights(self):
@@ -63,10 +61,11 @@ class ActorCritic(nn.Module):
                 nn.init.xavier_uniform_(module.weight)
                 nn.init.constant_(module.bias, 0)
     
-    def forward(self, x):
-        x = self.encoder(x)
+    def forward(self, state):
+        x = self.encoder(state)
         x = self.relu(x)
         action = self.actor(x)
+        action = action
         return self.actor(x), self.critic(x)
 
 # intrinsic curiosity module

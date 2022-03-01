@@ -16,13 +16,13 @@ class Wordle:
         self.guesses = []
         self.clues = []
         self.score = 0
-        self.empty_state = np.zeros((config.n_rounds_per_game - 1, 11))
+        self.action_mask = np.ones((words.n_words))
 
     # Encode state into array
     def state(self):
         # 5 rows for each previous state
         # 11 columns - 1 word, 5 letters, 5 clues
-        x = self.empty_state
+        x = np.zeros((config.n_rounds_per_game - 1, 11))
         for i in range(len(self.clues)):
             # encode index
             guess = self.guesses[i]
@@ -76,4 +76,5 @@ class Wordle:
         self.guesses = []
         self.clues = []
         self.score = 0
+        self.action_mask = np.ones((words.n_words))
         return self.state()
