@@ -71,7 +71,6 @@ def main():
         running_score = 0.0
         losses = {'total': 0.0, 'actor': 0.0, 'critic': 0.0, 'entropy': 0.0, 'a2c': 0.0, 'icm': 0.0}
         guesses = {}
-        seen_word_count = len(seen_words)
         # begin epoch
         for game in range(config.n_games_per_epoch):
             # reset game environment
@@ -79,10 +78,11 @@ def main():
             # game metrics
             log_policies = []
             values = []
-            rewards = [] 
+            intrinsic_rewards = []
             entropies = []
             inv_losses = []
             fwd_losses = []
+            clues = []
             # play a game
             for score in range(config.n_rounds_per_game):
                 # forward - actor critic
@@ -103,7 +103,7 @@ def main():
                     guesses[guess] = 1
                 seen_words.add(guess)
                 # step environment
-                next_state, done = env.step(action_index)
+                next_state, clue, done = env.step(action_index)
                 # exit if correct guess
                 if done:
                     break
@@ -114,19 +114,21 @@ def main():
                 intrinsic_reward = config.intrinsic_coeff * fwd_loss.detach()
                 # add to lists
                 values.append(value)
-                rewards.append(intrinsic_reward)
+                intrinsic_rewards.append(intrinsic_reward)
                 log_policies.append(log_policy[0, action])
                 entropies.append(entropy)
                 inv_losses.append(inv_loss)
                 fwd_losses.append(fwd_loss)
+                clues.append(clue)
                 # update state
                 state = next_state
             # game finished
             running_score += env.score
             # calculate reward (intrinsic + extrinsic)
-            extrinsic = config.n_rounds_per_game - env.score
-            extrinsic = torch.tensor([extrinsic], dtype=torch.float)
-            rewards = [intrinsic + extrinsic for intrinsic in rewards]
+            reward_score = config.n_rounds_per_game - env.score
+            reward_score = torch.tensor([reward_score], dtype=torch.float)
+            clue_reward = max([env.reward_clue(clue) for clue in clues])
+            rewards = [intrinsic + reward_score + clue_reward for intrinsic in intrinsic_rewards]
             running_reward += float(sum(rewards))
             # calculate loss
             _, R = a2c(state)
@@ -168,11 +170,10 @@ def main():
             ave_a2c_loss = losses['a2c'] / games_played
             ave_icm_loss = losses['icm'] / games_played
             top_words = list(dict(sorted(guesses.items(), key=lambda x: x[1], reverse=True)[:3]).keys())
-            new_words = len(seen_words) - seen_word_count
             time_taken = f'{(time.time() - start):.1f}'
             metrics = {
                 'avg_score': round(ave_score, 3),
-                'new_words': new_words,
+                'explored': f'{(len(seen_words) / len(data.words) * 100):.1f}%',
                 'top_words': top_words,
                 'avg_reward': round(ave_reward, 4),
                 'total_loss': round(ave_total_loss, 5),

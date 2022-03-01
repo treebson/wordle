@@ -6,6 +6,8 @@ word_embedding_size = 128
 letter_embedding_size = 16
 num_features = 1024
 
+reward_clue_coeff = 0.1
+
 learning_rate = 3e-4
 discount_factor = 0.9
 gae_coeff = 1.0

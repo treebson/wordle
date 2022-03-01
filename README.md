@@ -12,3 +12,4 @@ a humble attempt at beating wordle using pytorch and deep reinforcement learning
 - list package dependencies
 - hyperparameter tuning
 - evaluation `test.py`
+- train on all possible words

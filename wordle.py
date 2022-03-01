@@ -37,9 +37,9 @@ class Wordle:
             self.clues.append(clue)
             done = clue == '33333'
             next_state = self.state()
-            return next_state, done
+            return next_state, clue, done
         else:
-            return None, True
+            return None, None, True
 
     # TODO: fix incomplete logic
     def check(self, guess):
@@ -52,6 +52,16 @@ class Wordle:
             else:
                 clue += '1'
         return clue
+
+    def reward_clue(self, clue):
+        reward = 0
+        for x in list(clue):
+            if x == '2':
+                reward += 1
+            if x == '3':
+                reward += 3
+        reward = reward * config.reward_clue_coeff
+        return reward
 
     def reset(self):
         self.secret = np.random.choice(data.df.word, p=data.df.freq)
