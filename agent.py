@@ -7,9 +7,9 @@ import torch.nn.functional as F
 from collections import namedtuple, deque
 
 import config
-import data
+import words
 
-num_actions = data.n_words
+num_actions = words.n_words
 num_features = config.num_features
 
 # state encoder
@@ -17,8 +17,8 @@ class Encoder(nn.Module):
 
     def __init__(self):
         super(Encoder, self).__init__()
-        self.word_embedding = nn.Embedding(data.n_words + 1, config.word_embedding_size)
-        self.letter_embedding = nn.Embedding(data.n_letters + 1, config.letter_embedding_size)
+        self.word_embedding = nn.Embedding(num_actions + 1, config.word_embedding_size)
+        self.letter_embedding = nn.Embedding(words.n_letters + 1, config.letter_embedding_size)
         self.dense1 = nn.Linear(1065, num_features)
         self.relu = nn.LeakyReLU()
         self.dense2 = nn.Linear(num_features, num_features)

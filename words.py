@@ -8,7 +8,8 @@ def read_text_file(file_name):
     return lines
 
 # words
-words = read_text_file('data/possible_words.txt')
+#words = read_text_file('data/possible_words.txt')
+words = ['which', 'their', 'would', 'other', 'there', 'these', 'about', 'under', 'first', 'could']
 word2idx = {word: i+1 for i, word in enumerate(words)}
 idx2word = {i+1: word for i, word in enumerate(words)}
 n_words = len(words)

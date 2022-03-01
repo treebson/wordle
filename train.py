@@ -16,7 +16,7 @@ from torch.distributions import Categorical
 from wordle import Wordle
 
 import config
-import data
+import words
 import agent
 
 # fix manual seed
@@ -69,6 +69,7 @@ def main():
         start = time.time()
         running_reward = 0.0
         running_score = 0.0
+        running_clue = 0.0
         losses = {'total': 0.0, 'actor': 0.0, 'critic': 0.0, 'entropy': 0.0, 'a2c': 0.0, 'icm': 0.0}
         guesses = {}
         # begin epoch
@@ -82,6 +83,7 @@ def main():
             entropies = []
             inv_losses = []
             fwd_losses = []
+            guessed = []
             clues = []
             # play a game
             for score in range(config.n_rounds_per_game):
@@ -93,14 +95,15 @@ def main():
                 # determine next action
                 m = Categorical(policy)
                 action = m.sample()
-                action_onehot = F.one_hot(action, num_classes=data.n_words).float()
+                action_onehot = F.one_hot(action, num_classes=words.n_words).float()
                 action_index = action.item() + 1
                 # save guess for logging
-                guess = data.idx2word[action_index]
+                guess = words.idx2word[action_index]
                 if guess in guesses:
                     guesses[guess] += 1
                 else:
                     guesses[guess] = 1
+                guessed.append(guess)
                 seen_words.add(guess)
                 # step environment
                 next_state, clue, done = env.step(action_index)
@@ -122,13 +125,15 @@ def main():
                 clues.append(clue)
                 # update state
                 state = next_state
-            # game finished
-            running_score += env.score
+            # skip if guessed on first attempt
+            if score == 0:
+                continue
             # calculate reward (intrinsic + extrinsic)
+            running_score += env.score
             reward_score = config.n_rounds_per_game - env.score
-            reward_score = torch.tensor([reward_score], dtype=torch.float)
-            clue_reward = max([env.reward_clue(clue) for clue in clues])
-            rewards = [intrinsic + reward_score + clue_reward for intrinsic in intrinsic_rewards]
+            reward_clue = max([env.reward_clue(clue) for clue in clues])
+            rewards = [intrinsic + reward_score + reward_clue for intrinsic in intrinsic_rewards]
+            running_clue += float(reward_clue)
             running_reward += float(sum(rewards))
             # calculate loss
             _, R = a2c(state)
@@ -163,6 +168,7 @@ def main():
             games_played = game + 1
             ave_score = running_score / games_played
             ave_reward = running_reward / games_played
+            ave_clue = running_clue / games_played
             ave_total_loss = losses['total'] / games_played
             ave_actor_loss = losses['actor'] / games_played
             ave_critic_loss = losses['critic'] / games_played
@@ -173,9 +179,10 @@ def main():
             time_taken = f'{(time.time() - start):.1f}'
             metrics = {
                 'avg_score': round(ave_score, 3),
-                'explored': f'{(len(seen_words) / len(data.words) * 100):.1f}%',
-                'top_words': top_words,
+                'avg_clue': round(ave_clue, 3),
                 'avg_reward': round(ave_reward, 4),
+                'explored': f'{(len(seen_words) / len(words.words) * 100):.1f}%',
+                'top_words': top_words,
                 'total_loss': round(ave_total_loss, 5),
                 'actor_loss': round(ave_actor_loss, 5),
                 'critic_loss': round(ave_critic_loss, 5),
@@ -186,7 +193,12 @@ def main():
 
             prefix = f'Epoch {epoch+1}/{config.n_epochs}:'
             suffix = f'games played in {time_taken}s, metrics: {metrics}'
-            message = print_progress_bar(game, config.n_games_per_epoch, prefix=prefix, suffix=suffix)
+
+            if config.debug_actions:
+                message = f'secret: {env.secret}, guesses: {guessed}'
+                print(message)
+            else:
+                message = print_progress_bar(game, config.n_games_per_epoch, prefix=prefix, suffix=suffix)
         # log final message of epoch
         with open('output/log.txt', 'a') as log_file:
             log_file.write(message)

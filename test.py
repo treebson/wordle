@@ -1,7 +1,8 @@
 # todo: populate
 
 import config
-import data
+import words
 
-print(data.n_words)
-print(data.df)
+df = words.df
+df = df.sort_values(by='freq', ascending=False)
+print(df.word[:10].tolist())
