@@ -1,15 +1,15 @@
-n_epochs = 1000
+n_epochs = 10000
 n_games_per_epoch = 100
 n_rounds_per_game = 6
-batch_size = 128
-discount_factor = 0.9
-eps_start = 0.9
-eps_end = 0.1
-eps_decay = 200
-target_update = 10
-replay_memory_size = 100000
-word_embedding_size = 64
+
+word_embedding_size = 128
 letter_embedding_size = 16
+num_features = 1024
+
+learning_rate = 3e-4
+discount_factor = 0.9
+gae_coeff = 1.0
+entropy_coeff = 1e-4
 intrinsic_coeff = 0.2
 curiosity_coeff = 0.2
-learning_rate = 3e-4
+a2c_loss_coeff = 1.0
