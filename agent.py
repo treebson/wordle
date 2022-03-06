@@ -9,7 +9,7 @@ from collections import namedtuple, deque
 import config
 import words
 
-num_actions = words.n_words
+num_actions = config.num_words
 num_features = config.num_features
 
 # state encoder
@@ -18,7 +18,7 @@ class Encoder(nn.Module):
     def __init__(self):
         super(Encoder, self).__init__()
         self.word_embedding = nn.Embedding(num_actions + 1, config.word_embedding_size)
-        self.letter_embedding = nn.Embedding(words.n_letters + 1, config.letter_embedding_size)
+        self.letter_embedding = nn.Embedding(26 + 1, config.letter_embedding_size) # 26 letters in alphabet + 1 empty case
         self.dense1 = nn.Linear(1065, num_features)
         self.relu = nn.LeakyReLU()
         self.dense2 = nn.Linear(num_features, num_features)

@@ -99,7 +99,7 @@ def main():
                 masked_probs = probs * mask
                 m.probs = masked_probs
                 action = m.sample()
-                action_onehot = F.one_hot(action, num_classes=words.n_words).float()
+                action_onehot = F.one_hot(action, num_classes=config.num_words).float()
                 action_index = action.item() + 1
                 # update action_mask
                 env.action_mask = env.action_mask * (1 - action_onehot.detach().numpy())

@@ -16,7 +16,7 @@ class Wordle:
         self.guesses = []
         self.clues = []
         self.score = 0
-        self.action_mask = np.ones((words.n_words))
+        self.action_mask = np.ones((config.num_words))
 
     # Encode state into array
     def state(self):
@@ -76,5 +76,5 @@ class Wordle:
         self.guesses = []
         self.clues = []
         self.score = 0
-        self.action_mask = np.ones((words.n_words))
+        self.action_mask = np.ones((config.num_words))
         return self.state()

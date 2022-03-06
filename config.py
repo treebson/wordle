@@ -7,7 +7,8 @@ letter_embedding_size = 16
 num_features = 1024
 
 sample_by_freq = False
-debug_actions = True
+debug_actions = False
+num_words = 100
 
 learning_rate = 3e-4
 discount_factor = 0.9
