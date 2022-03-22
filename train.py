@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torch.nn.utils as utils
 from torch.distributions import Categorical
 
 from wordle import Wordle
@@ -18,6 +19,8 @@ from wordle import Wordle
 import config
 import words
 import agent
+
+torch.set_printoptions(precision=6, sci_mode=False)
 
 # fix manual seed
 torch.manual_seed(42)
@@ -64,16 +67,18 @@ def main():
     reset_directory('output')
     env = Wordle()
     seen_words = set()
-    for epoch in range(config.n_epochs):
+    for epoch in range(config.num_epochs):
         # diagnostic variables
         start = time.time()
         running_reward = 0.0
         running_score = 0.0
         running_clue = 0.0
-        losses = {'total': 0.0, 'actor': 0.0, 'critic': 0.0, 'entropy': 0.0, 'a2c': 0.0, 'icm': 0.0}
+        losses = {'total': 0.0, 'actor': 0.0, 'critic': 0.0, 'entropy': 0.0, 'icm': 0.0}
         guesses = {}
+        rounds_played = 0
+        history = []
         # begin epoch
-        for game in range(config.n_games_per_epoch):
+        for game in range(config.num_games_per_epoch):
             # reset game environment
             state = env.reset()
             # game metrics
@@ -83,39 +88,38 @@ def main():
             entropies = []
             inv_losses = []
             fwd_losses = []
-            guessed = []
-            clues = []
             # play a game
-            for score in range(config.n_rounds_per_game):
+            for score in range(config.num_rounds_per_game):
+                if config.random_first_word and score == 0:
+                    w = words.words.copy()
+                    w.remove(env.answer)
+                    guess = np.random.choice(w)
+                    state, clue, done = env.step(guess)
+                    continue
                 # forward - actor critic
                 logits, value = a2c(state)
-                policy = F.softmax(logits, dim=1)
-                log_policy = F.log_softmax(logits, dim=1)
+                policy = F.softmax(logits, dim=1) * torch.from_numpy(env.action_mask)
+                policy = policy / torch.sum(policy)
+                log_policy = F.log_softmax(logits, dim=1) * torch.from_numpy(env.action_mask)
+                log_policy = log_policy / torch.sum(log_policy)
                 entropy = -(policy * log_policy).sum(1, keepdim=True)
                 # determine next action
                 m = Categorical(policy)
-                mask = torch.from_numpy(env.action_mask)
-                probs = m.probs
-                masked_probs = probs * mask
-                m.probs = masked_probs
                 action = m.sample()
-                action_onehot = F.one_hot(action, num_classes=config.num_words).float()
+                action_onehot = F.one_hot(action, num_classes=words.num_words).float()
                 action_index = action.item() + 1
-                # update action_mask
-                env.action_mask = env.action_mask * (1 - action_onehot.detach().numpy())
                 # save guess for logging
                 guess = words.idx2word[action_index]
                 if guess in guesses:
                     guesses[guess] += 1
                 else:
                     guesses[guess] = 1
-                guessed.append(guess)
                 seen_words.add(guess)
                 # step environment
-                next_state, clue, done = env.step(action_index)
-                # exit if correct guess
-                if done:
-                    break
+                next_state, clue, done = env.step(guess)
+                # save
+                running_clue += env.reward_clue(clue)
+                rounds_played += 1
                 # intrinsic reward
                 pred_logits, pred_phi, phi = icm(state, next_state, action_onehot)
                 inv_loss = inv_criterion(pred_logits, action_onehot)
@@ -128,19 +132,24 @@ def main():
                 entropies.append(entropy)
                 inv_losses.append(inv_loss)
                 fwd_losses.append(fwd_loss)
-                clues.append(clue)
-                # update state
-                state = next_state
+                if done:
+                    break
+                else:
+                    state = next_state
             # skip if guessed on first attempt
-            if score == 0:
+            if env.score == 1:
                 continue
-            # calculate reward (intrinsic + extrinsic)
+            # calculate rewards via replay
+            rewards = []
+            score = config.num_rounds_per_game - env.score + 1.0
+            clue_rewards = [env.reward_clue(clue) for clue in env.clues]
+            for intrinsic, clue in zip(intrinsic_rewards, clue_rewards):
+                reward = score + intrinsic + clue
+                rewards.append(reward)
+            # update diagnostics
             running_score += env.score
-            reward_score = config.n_rounds_per_game - env.score
-            reward_clue = max([env.reward_clue(clue) for clue in clues])
-            rewards = [intrinsic + reward_score + reward_clue for intrinsic in intrinsic_rewards]
-            running_clue += float(reward_clue)
-            running_reward += float(sum(rewards))
+            reward_total = sum(rewards)
+            running_reward += float(reward_total)
             # calculate loss
             _, R = a2c(state)
             gae = torch.zeros((1, 1), dtype=torch.float)
@@ -158,28 +167,28 @@ def main():
                 critic_loss = critic_loss + (R - value) ** 2 / 2
                 entropy_loss = entropy_loss + entropy
                 icm_loss = icm_loss + (1 - config.curiosity_coeff) * inv + config.curiosity_coeff * fwd
-            a2c_loss = config.a2c_loss_coeff * (-actor_loss + critic_loss - config.entropy_coeff * entropy_loss)
-            total_loss = a2c_loss + icm_loss
+            total_loss = config.a2c_loss_coeff * (-actor_loss + critic_loss - config.entropy_coeff * entropy_loss) + icm_loss
             # optimize model
             optimizer.zero_grad()
             total_loss.backward()
+            utils.clip_grad_norm_(a2c.parameters(), 1.0)
+            utils.clip_grad_norm_(icm.parameters(), 1.0)
             optimizer.step()
+
             # print diagnostics
             losses['total'] += float(total_loss)
             losses['actor'] += float(actor_loss)
             losses['critic'] += float(critic_loss)
             losses['entropy'] += float(entropy_loss)
-            losses['a2c'] += float(a2c_loss)
             losses['icm'] += float(icm_loss)
             games_played = game + 1
             ave_score = running_score / games_played
             ave_reward = running_reward / games_played
-            ave_clue = running_clue / games_played
+            ave_clue = running_clue / rounds_played
             ave_total_loss = losses['total'] / games_played
             ave_actor_loss = losses['actor'] / games_played
             ave_critic_loss = losses['critic'] / games_played
             ave_entropy_loss = losses['entropy'] / games_played
-            ave_a2c_loss = losses['a2c'] / games_played
             ave_icm_loss = losses['icm'] / games_played
             top_words = list(dict(sorted(guesses.items(), key=lambda x: x[1], reverse=True)[:3]).keys())
             time_taken = f'{(time.time() - start):.1f}'
@@ -193,21 +202,27 @@ def main():
                 'actor_loss': round(ave_actor_loss, 5),
                 'critic_loss': round(ave_critic_loss, 5),
                 'entropy_loss': round(ave_entropy_loss, 5),
-                'a2c_loss': round(ave_a2c_loss, 5),
                 'icm_loss': round(ave_icm_loss, 5),    
             }
 
-            prefix = f'Epoch {epoch+1}/{config.n_epochs}:'
+            prefix = f'Epoch {epoch+1}/{config.num_epochs}:'
             suffix = f'games played in {time_taken}s, metrics: {metrics}'
 
-            if config.debug_actions:
-                message = f'secret: {env.secret}, guesses: {guessed}'
-                print(message)
-            else:
-                message = print_progress_bar(game, config.n_games_per_epoch, prefix=prefix, suffix=suffix)
+            actions_out = []
+            for r in range(config.num_rounds_per_game):
+                if r < len(env.guesses):
+                    actions_out.append(env.guesses[r])
+                else:
+                    actions_out.append('-----')
+
+            info = f'answer: {env.answer}, actions: {actions_out}, score: {env.score:.0f}, reward: {score:.0f}, clue: {max(clue_rewards):.2f}, intrinsic: {sum(intrinsic_rewards):.4f}, total_reward: {sum(rewards):.6f}'
+            history.append(info)
+            message = print_progress_bar(game, config.num_games_per_epoch, prefix=prefix, suffix=suffix)
         # log final message of epoch
         with open('output/log.txt', 'a') as log_file:
             log_file.write(message)
+        with open('output/games.txt', 'a') as game_file:
+            game_file.write('\n'.join(history) + '\n')
         # save model weights
         torch.save(a2c.state_dict(), 'output/a2c.pth')
         torch.save(icm.state_dict(), 'output/icm.pth')

@@ -1,7 +1,9 @@
 import string
-import torch
 import numpy as np
 import pandas as pd
+
+import torch
+import torch.nn.functional as F
 
 import words
 import config
@@ -10,71 +12,108 @@ yellow = 1
 green = 3
 max_reward = 5 * green
 
+clue_state = {'?' : 0, 'B': 1, 'Y': 2, 'G': 3}
+
 class Wordle:
     def __init__(self):
-        self.secret = None
+        self.answer = None
         self.guesses = []
         self.clues = []
-        self.score = 0
-        self.action_mask = np.ones((config.num_words))
+        self.score = 1
+        self.keyboard_state = {c: '?' for c in string.ascii_lowercase}
+        self.position_state = [string.ascii_lowercase for i in range(5)]
+        self.action_mask = np.ones((1, words.num_words))
+        self.reset()
 
-    # Encode state into array
+    # retrieve game state as tensor
     def state(self):
-        # 5 rows for each previous state
-        # 11 columns - 1 word, 5 letters, 5 clues
-        x = np.zeros((config.n_rounds_per_game - 1, 11))
-        for i in range(len(self.clues)):
-            # encode index
-            guess = self.guesses[i]
-            word_idx = words.word2idx[guess]
-            letter_idxs = [words.letter2idx[letter] for letter in guess]
-            clues = [int(clue) for clue in self.clues[i]]
-            x[i] = [word_idx] + letter_idxs + clues
-        x = torch.from_numpy(x).type(torch.int64)
-        return x
+        # one-hot encode keyboard state (26x4)
+        x_keyboard = torch.tensor([clue_state[self.keyboard_state[c]] for c in string.ascii_lowercase])
+        x_keyboard = F.one_hot(x_keyboard, num_classes=4)
+        # multi-hot encode letters by position (5x26)
+        x_position = [[1 if c in ps.lower() else 0 for c in string.ascii_lowercase] for ps in self.position_state]
+        x_position = torch.tensor(x_position)
+        return (x_keyboard, x_position)
 
-    def step(self, action):
-        self.score += 1
-        if self.score < config.n_rounds_per_game:
-            guess = words.idx2word[action]
-            clue = self.check(guess)
-            self.guesses.append(guess)
-            self.clues.append(clue)
-            done = clue == '33333'
-            next_state = self.state()
-            return next_state, clue, done
-        else:
-            return None, None, True
+    def step(self, guess):
+        clue = self.check(guess)
+        self.update_keyboard_state(guess, clue)
+        self.update_position_state(guess, clue)
+        self.update_action_mask(guess)
+        self.guesses.append(guess)
+        self.clues.append(clue)
+        done = clue == ['G'] * 5
+        if not done:
+            self.score += 1
+        return self.state(), clue, done
 
-    # TODO: fix incomplete logic
-    def check(self, guess):
-        clue = ''
-        for i in range(5):
-            if guess[i] == self.secret[i]:
-                clue += '3'
-            elif guess[i] in self.secret:
-                clue += '2'
+    def update_keyboard_state(self, guess, clue):
+        ks = self.keyboard_state
+        for i, (x, y) in enumerate(zip(list(guess), list(clue))):
+            if clue_state[y] > clue_state[ks[x]]:
+                ks[x] = y
+        self.keyboard_state = ks
+
+    def update_position_state(self, guess, clue):
+        ps = self.position_state
+        for i, (x, y) in enumerate(zip(list(guess), list(clue))):
+            if y == 'G':
+                for j in range(5):
+                    ps[j] = ps[j].replace(x, '')
+                    ps[j] = ps[j].replace(x.upper(), '')
+                ps[i] = x.upper()
+            elif y == 'B':
+                for j in range(5):
+                    ps[j] = ps[j].replace(x, '')
             else:
-                clue += '1'
+                for j in range(5):
+                    ps[j] = ps[j].replace(x, x.upper())
+                ps[i] = ps[i].replace(x, '')
+                ps[i] = ps[i].replace(x.upper(), '')
+        self.position_state = ps
+
+    def update_action_mask(self, guess):
+        idx = words.word2idx[guess] - 1
+        self.action_mask[0, idx] = 0
+        
+    def check(self, guess):
+        clue = []
+        for i in range(5):
+            letter = guess[i]
+            if letter == self.answer[i]:
+                clue.append('G')
+            elif letter in self.answer:
+                occurences_in_guess = guess.count(letter)
+                occurences_in_answer = self.answer.count(letter)
+                if occurences_in_guess > occurences_in_answer and guess[:i].count(letter) == occurences_in_answer:
+                    clue.append('B')
+                else:
+                    clue.append('Y')
+            else:
+                clue.append('B')
         return clue
 
     def reward_clue(self, clue):
         reward = 0
         for x in list(clue):
-            if x == '2':
+            if x == 'Y':
                 reward += yellow
-            if x == '3':
+            if x == 'G':
                 reward += green
         reward = reward / max_reward
         return reward
 
-    def reset(self):
-        if config.sample_by_freq:
-            self.secret = np.random.choice(words.df.word, p=words.df.freq)
+    def reset(self, answer=None):
+        if answer != None:
+            self.answer = answer
+        elif config.sample_by_freq:
+            self.answer = np.random.choice(words.df.word, p=words.df.freq)
         else:
-            self.secret = np.random.choice(words.df.word) 
+            self.answer = np.random.choice(words.words)
         self.guesses = []
         self.clues = []
-        self.score = 0
-        self.action_mask = np.ones((config.num_words))
+        self.score = 1
+        self.keyboard_state = {c: '?' for c in string.ascii_lowercase}
+        self.position_state = [string.ascii_lowercase for i in range(5)]
+        self.action_mask = np.ones((1, words.num_words))
         return self.state()
