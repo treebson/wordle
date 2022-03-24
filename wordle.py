@@ -22,7 +22,7 @@ class Wordle:
         self.score = 1
         self.keyboard_state = {c: '?' for c in string.ascii_lowercase}
         self.position_state = [string.ascii_lowercase for i in range(5)]
-        self.action_mask = np.ones((1, words.num_words))
+        self.possible_words = np.ones(words.num_words)
         self.reset()
 
     # retrieve game state as tensor
@@ -33,13 +33,13 @@ class Wordle:
         # multi-hot encode letters by position (5x26)
         x_position = [[1 if c in ps.lower() else 0 for c in string.ascii_lowercase] for ps in self.position_state]
         x_position = torch.tensor(x_position)
-        return (x_keyboard, x_position)
+        # convert possible words to tensor
+        x_possible = torch.from_numpy(self.possible_words)
+        return (x_keyboard, x_position, x_possible)
 
     def step(self, guess):
         clue = self.check(guess)
-        self.update_keyboard_state(guess, clue)
-        self.update_position_state(guess, clue)
-        self.update_action_mask(guess)
+        self.update_state(guess, clue)
         self.guesses.append(guess)
         self.clues.append(clue)
         done = clue == ['G'] * 5
@@ -47,34 +47,37 @@ class Wordle:
             self.score += 1
         return self.state(), clue, done
 
-    def update_keyboard_state(self, guess, clue):
+    def update_state(self, guess, clue):
         ks = self.keyboard_state
+        ps = self.position_state
+        mask = self.possible_words
+        # i = index, x = letter, y = colour
         for i, (x, y) in enumerate(zip(list(guess), list(clue))):
+            # keyboard
             if clue_state[y] > clue_state[ks[x]]:
                 ks[x] = y
-        self.keyboard_state = ks
-
-    def update_position_state(self, guess, clue):
-        ps = self.position_state
-        for i, (x, y) in enumerate(zip(list(guess), list(clue))):
+            # position info
             if y == 'G':
-                for j in range(5):
-                    ps[j] = ps[j].replace(x, '')
-                    ps[j] = ps[j].replace(x.upper(), '')
-                ps[i] = x.upper()
+                ps[i] = x
             elif y == 'B':
                 for j in range(5):
                     ps[j] = ps[j].replace(x, '')
-            else:
-                for j in range(5):
-                    ps[j] = ps[j].replace(x, x.upper())
+            else: # 'Y'
                 ps[i] = ps[i].replace(x, '')
-                ps[i] = ps[i].replace(x.upper(), '')
+            # possible words
+            if y == 'G':
+                for j, word in enumerate(words.words):
+                    if x != word[i]:
+                        mask[j] = 0
+            elif y == 'B':
+                for j, word in enumerate(words.words):
+                    if x in word:
+                        mask[j] = 0
+            else: # y == 'Y'
+                continue
+        self.keyboard_state = ks
         self.position_state = ps
-
-    def update_action_mask(self, guess):
-        idx = words.word2idx[guess] - 1
-        self.action_mask[0, idx] = 0
+        self.possible_words = mask
         
     def check(self, guess):
         clue = []
@@ -115,5 +118,5 @@ class Wordle:
         self.score = 1
         self.keyboard_state = {c: '?' for c in string.ascii_lowercase}
         self.position_state = [string.ascii_lowercase for i in range(5)]
-        self.action_mask = np.ones((1, words.num_words))
+        self.possible_words = np.ones(words.num_words)
         return self.state()

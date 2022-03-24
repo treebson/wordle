@@ -24,11 +24,12 @@ class Encoder(nn.Module):
         self.dense2 = nn.Linear(num_features, num_features)
     
     def forward(self, x):
-        (x_keyboard, x_position) = x
+        (x_keyboard, x_position, x_possible) = x
         # flatten and combine
         x_keyboard = torch.flatten(x_keyboard)
         x_position = torch.flatten(x_position)
-        x = torch.cat((x_keyboard, x_position))
+        x_possible = torch.flatten(x_possible)
+        x = torch.cat((x_keyboard, x_position, x_possible))
         x = x.view(1, -1).float()
         # dense layers
         x = self.dense1(x)

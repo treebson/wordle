@@ -58,7 +58,7 @@ def print_progress_bar(iteration, total, prefix='', suffix='', length=30, fill='
 
 # reset output directory
 def reset_directory(path):
-    if os.path.isdir(path):
+    while os.path.isdir(path):
         shutil.rmtree(path)
     os.mkdir(path)
 
@@ -98,16 +98,15 @@ def main():
                     continue
                 # forward - actor critic
                 logits, value = a2c(state)
-                policy = F.softmax(logits, dim=1) * torch.from_numpy(env.action_mask)
-                policy = policy / torch.sum(policy)
-                log_policy = F.log_softmax(logits, dim=1) * torch.from_numpy(env.action_mask)
-                log_policy = log_policy / torch.sum(log_policy)
+                logits *= torch.from_numpy(env.possible_words)
+                policy = F.softmax(logits, dim=1)
+                log_policy = F.log_softmax(logits, dim=1)
                 entropy = -(policy * log_policy).sum(1, keepdim=True)
                 # determine next action
                 m = Categorical(policy)
                 action = m.sample()
                 action_onehot = F.one_hot(action, num_classes=words.num_words).float()
-                action_index = action.item() + 1
+                action_index = action.item()
                 # save guess for logging
                 guess = words.idx2word[action_index]
                 if guess in guesses:
@@ -196,7 +195,7 @@ def main():
                 'avg_score': round(ave_score, 3),
                 'avg_clue': round(ave_clue, 3),
                 'avg_reward': round(ave_reward, 4),
-                'explored': f'{(len(seen_words) / len(words.words) * 100):.1f}%',
+                # 'explored': f'{(len(seen_words) / len(words.words) * 100):.1f}%',
                 'top_words': top_words,
                 'total_loss': round(ave_total_loss, 5),
                 'actor_loss': round(ave_actor_loss, 5),
@@ -214,7 +213,6 @@ def main():
                     actions_out.append(env.guesses[r])
                 else:
                     actions_out.append('-----')
-
             info = f'answer: {env.answer}, actions: {actions_out}, score: {env.score:.0f}, reward: {score:.0f}, clue: {max(clue_rewards):.2f}, intrinsic: {sum(intrinsic_rewards):.4f}, total_reward: {sum(rewards):.6f}'
             history.append(info)
             message = print_progress_bar(game, config.num_games_per_epoch, prefix=prefix, suffix=suffix)

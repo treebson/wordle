@@ -1,9 +1,13 @@
 import config
 import words
+import numpy as np
 from wordle import Wordle
 
+answer = 'cases'
+
 env = Wordle()
-# env.reset('abide') # test 'speed'
+if answer != None:
+    env.reset(answer)
 
 def color(clue):
     if clue == 'G':
@@ -21,6 +25,10 @@ for i in range(config.num_rounds_per_game):
         print('State Input:')
         print('- keyboard:', ', '.join([f'{c}={color(env.keyboard_state[c])}' for c in env.keyboard_state.keys()]))
         print('- position:', env.position_state)
+        print('- possible:', np.sum(env.possible_words))
+        possible_indices = np.where(env.possible_words == 1)[0].tolist()
+        if len(possible_indices) < 50:
+            print([words.idx2word[j] for j in possible_indices])
         guess = input('\nGuess: ')
         guess = guess.lower()
         if len(guess) != 5:
@@ -39,5 +47,8 @@ print('- keyboard:', ', '.join([f'{c}={color(env.keyboard_state[c])}' for c in e
 print('- position:', env.position_state)
 print(f'\nAnswer: {env.answer}')
 print(f'Score: {env.score}\n')
+print('\n')
+print(env.clues)
+print(env.guesses)
 
 

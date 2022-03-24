@@ -1,14 +1,13 @@
 # Wordle
 num_rounds_per_game = 6
 word_limit = 100
-sample_by_freq = True
+sample_by_freq = False
 # Training
-random_first_word = True
+random_first_word = False
 num_epochs = 10000
 num_games_per_epoch = 100
 # Neural net
-input_size = 234
-word_embedding_size = 128
+input_size = 334
 num_features = 512
 # Hyperparameters
 learning_rate = 3e-4
