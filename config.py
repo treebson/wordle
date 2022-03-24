@@ -8,7 +8,7 @@ num_epochs = 10000
 num_games_per_epoch = 100
 # Neural net
 input_size = 334
-num_features = 512
+num_features = 1024
 # Hyperparameters
 learning_rate = 3e-4
 discount_factor = 0.9
